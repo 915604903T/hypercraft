@@ -23,7 +23,7 @@ extern crate log;
 #[path = "arch/riscv/mod.rs"]
 mod arch;
 #[cfg(target_arch = "x86_64")]
-#[path = "arch/dummy.rs"]
+#[path = "arch/x86_64/mod.rs"]
 mod arch;
 #[cfg(target_arch = "aarch64")]
 #[path = "arch/dummy.rs"]
@@ -72,4 +72,6 @@ pub enum HyperError {
     PageFault,
     /// Decode error.
     DecodeError,
+    /// Disabled.
+    Disabled,
 }

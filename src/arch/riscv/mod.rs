@@ -10,7 +10,6 @@ mod vm;
 mod vm_pages;
 mod vmexit;
 
-use detect::detect_h_extension;
 pub use ept::NestedPageTable;
 pub use regs::GprIndex;
 pub use sbi::SbiMessage as HyperCallMsg;
@@ -20,12 +19,17 @@ pub use vm::VM;
 pub use vmexit::VmExitInfo;
 
 use self::csrs::{traps, ReadWriteCsr, RiscvCsrTrait, CSR};
+use self::detect::detect_h_extension;
 use self::devices::plic::PlicState;
 use self::vcpu::VmCpuRegisters;
 use sbi::BaseFunction;
 
 /// Initialize the hypervisor runtime.
 pub fn init_hv_runtime() {
+    if !detect_h_extension() {
+        panic!("H Extension not supported.")
+    }
+
     unsafe {
         setup_csrs();
     }

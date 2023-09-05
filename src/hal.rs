@@ -1,7 +1,9 @@
-use crate::{GuestPageTableTrait, HostPageNum, HostPhysAddr};
+use crate::{GuestPageTableTrait, HostPageNum, HostPhysAddr, HostVirtAddr, memory::PAGE_SIZE_4K};
 
 /// The interfaces which the underlginh software(kernel or hypervisor) must implement.
 pub trait HyperCraftHal: Sized {
+    const PAGE_SIZE: usize = PAGE_SIZE_4K;
+
     /// Allocates a 4K-sized contiguous physical page, returns its physical address.
     fn alloc_page() -> Option<HostPhysAddr> {
         Self::alloc_pages(1)
@@ -26,4 +28,11 @@ pub trait HyperCraftHal: Sized {
     fn dealloc_pages(pa: HostPhysAddr, num_pages: usize);
     // /// VM-Exit handler
     // fn vmexit_handler(vcpu: &mut crate::VCpu<Self>, vm_exit_info: VmExitInfo);
+
+    /// Convert a host physical address to host virtual address.
+    #[cfg(target_arch = "x86_64")]
+    fn phys_to_virt(pa: HostPhysAddr) -> HostVirtAddr;
+    /// Convert a host virtual address to host physical address.
+    #[cfg(target_arch = "x86_64")]
+    fn virt_to_phys(va: HostVirtAddr) -> HostPhysAddr;
 }
