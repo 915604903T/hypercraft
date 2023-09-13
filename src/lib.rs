@@ -7,12 +7,14 @@
     clippy::collapsible_match,
     clippy::default_constructed_unit_structs,
     dead_code,
+    non_camel_case_types,
     non_upper_case_globals,
     unused_imports,
     unused_assignments
 )]
 #![deny(missing_docs, warnings)]
 #![feature(naked_functions, asm_const, negative_impls, stdsimd)]
+#![feature(concat_idents)]
 
 extern crate alloc;
 

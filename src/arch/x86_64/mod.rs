@@ -1,13 +1,20 @@
-mod detect;
-mod percpu;
+#[macro_use]
+mod regs;
+
+// mod lapic;
+mod memory;
 mod msr;
+mod vmx;
+mod percpu;
 
 use crate::{GuestPageTableTrait, HyperCraftHal};
 use page_table::PagingIf;
 
+pub use vmx::VmxVcpu;
+
 /// Initialize the hypervisor runtime.
 pub fn init_hv_runtime() {
-    if !detect::has_hardware_support() {
+    if !vmx::has_hardware_support() {
         panic!("VMX not supported");
     }
 }

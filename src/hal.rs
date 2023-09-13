@@ -2,6 +2,7 @@ use crate::{GuestPageTableTrait, HostPageNum, HostPhysAddr, HostVirtAddr, memory
 
 /// The interfaces which the underlginh software(kernel or hypervisor) must implement.
 pub trait HyperCraftHal: Sized {
+    /// Page size.
     const PAGE_SIZE: usize = PAGE_SIZE_4K;
 
     /// Allocates a 4K-sized contiguous physical page, returns its physical address.
