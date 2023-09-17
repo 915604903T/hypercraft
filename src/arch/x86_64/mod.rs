@@ -1,6 +1,8 @@
 #[macro_use]
 mod regs;
 
+// Codes in this module come mainly from https://github.com/rcore-os/RVM-Tutorial
+
 // mod lapic;
 mod memory;
 mod msr;
@@ -31,9 +33,7 @@ pub struct NestedPageTable<I: PagingIf> {
 }
 
 /// VCpu define.
-pub struct VCpu<H: HyperCraftHal> {
-    _marker: core::marker::PhantomData<H>,
-}
+pub use vmx::VmxVcpu as VCpu;
 
 impl<H: HyperCraftHal> VCpu<H> {
     /// Get the vcpu id.
@@ -47,10 +47,7 @@ pub struct VM<H: HyperCraftHal> {
     _marker: core::marker::PhantomData<H>,
 }
 
-/// PerCpu define.
-pub struct PerCpu<H: HyperCraftHal> {
-    _marker: core::marker::PhantomData<H>,
-}
+pub use percpu::PerCpu;
 
 /// VM exit information.
 pub struct VmExitInfo {}

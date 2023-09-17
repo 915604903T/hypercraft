@@ -26,12 +26,28 @@ impl<H: HyperCraftHal> PerCpu<H> {
 
     /// Enable hardware virtualization on the current CPU.
     pub fn hardware_enable(&mut self) -> HyperResult {
-        self.arch.hardware_enable()
+        match self.arch.hardware_enable() {
+            Ok(_) => {
+                info!("VMX enabled on cpu {}.", self.cpu_id);
+                Ok(())
+            },
+            e @ Err(_) => {
+                e
+            }
+        }
     }
 
     /// Disable hardware virtualization on the current CPU.
     pub fn hardware_disable(&mut self) -> HyperResult {
-        self.arch.hardware_disable()
+        match self.arch.hardware_disable() {
+            Ok(_) => {
+                info!("VMX disabled on cpu {}.", self.cpu_id);
+                Ok(())
+            },
+            e @ Err(_) => {
+                e
+            }
+        }
     }
 
     /// Create a [`RvmVcpu`], set the entry point to `entry`, set the nested

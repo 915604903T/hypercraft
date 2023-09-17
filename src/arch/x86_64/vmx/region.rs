@@ -15,7 +15,9 @@ pub struct PhysFrame<H: HyperCraftHal> {
 impl<H: HyperCraftHal> PhysFrame<H> {
     pub fn alloc() -> HyperResult<Self> {
         let start_paddr = H::alloc_page()
+            .map(|va| H::virt_to_phys(va))
             .ok_or_else(|| HyperError::NoMemory)?;
+        trace!("allocated physframe {:#018x}", start_paddr);
         assert_ne!(start_paddr, 0);
         Ok(Self {
             start_paddr,
@@ -52,7 +54,9 @@ impl<H: HyperCraftHal> PhysFrame<H> {
 impl<H: HyperCraftHal> Drop for PhysFrame<H> {
     fn drop(&mut self) {
         if self.start_paddr > 0 {
-            H::dealloc_page(self.start_paddr);
+            trace!("dropping physframe {:#018x}", self.start_paddr);
+            H::dealloc_page(H::phys_to_virt(self.start_paddr));
+            trace!("dropped physframe {:#018x}", self.start_paddr);
         }
     }
 }

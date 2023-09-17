@@ -86,7 +86,6 @@ impl<H: HyperCraftHal> VmxPerCpuState<H> {
             // Execute VMXON.
             vmx::vmxon(self.vmx_region.phys_addr() as _)?;
         }
-        info!("[RVM] successed to turn on VMX.");
 
         Ok(())
     }
@@ -102,7 +101,6 @@ impl<H: HyperCraftHal> VmxPerCpuState<H> {
             // Remove VMXE bit in CR4.
             Cr4::update(|cr4| cr4.remove(Cr4Flags::VIRTUAL_MACHINE_EXTENSIONS));
         };
-        info!("[RVM] successed to turn off VMX.");
 
         self.vmx_region = unsafe { VmxRegion::uninit() };
         Ok(())
