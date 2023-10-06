@@ -14,6 +14,7 @@ use super::vmcs::{
     VmcsGuestNW, VmcsHost16, VmcsHost32, VmcsHost64, VmcsHostNW,
 };
 use super::VmxPerCpuState;
+use super::definitions::VmxExitReason;
 use crate::arch::{msr::Msr, memory::NestedPageFaultInfo, regs::GeneralRegisters};
 // use crate::arch::lapic::ApicTimer;
 use crate::{GuestPhysAddr, HostPhysAddr, HyperCraftHal, HyperResult};
@@ -397,6 +398,21 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
     }
 
     fn vmexit_handler(&mut self) {
+        let exit_info = self.exit_info().unwrap();
+
+        if exit_info.entry_failure {
+            panic!("VM entry failed: {:#x?}", exit_info);
+        }
+
+        trace!("VM exit: {:#x?}", exit_info);
+
+        if exit_info.exit_reason == VmxExitReason::EXTERNAL_INTERRUPT {
+            let int_info = self.interrupt_exit_info().unwrap();
+        
+            trace!("VM-exit: external interrupt: {:#x?}", int_info);
+        }
+
+        panic!("vm exited, handler to be implemented");
         // H::vmexit_handler(self);
         /*
         // Check if there is an APIC timer interrupt

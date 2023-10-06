@@ -3,10 +3,11 @@ use bitflags::bitflags;
 use core::arch::asm;
 use x86::bits64::{rflags::{self, RFlags}, vmx};
 use x86::vmx::{Result, VmFail};
+use page_table_entry::MappingFlags;
 
 use super::definitions::{VmxExitReason, VmxInstructionError, VmxInterruptionType};
 use crate::{HostPhysAddr, HyperError, HyperResult};
-use crate::arch::memory::{MemFlags, NestedPageFaultInfo};
+use crate::arch::memory::NestedPageFaultInfo;
 use crate::arch::msr::Msr;
 use crate::memory::PAGE_SIZE_4K;
 
@@ -483,7 +484,7 @@ pub struct VmxExitInfo {
     /// VM-entry failure. (0 = true VM exit; 1 = VM-entry failure)
     pub entry_failure: bool,
     /// Basic exit reason.
-    pub exit_reason: VmxExitReason,
+pub exit_reason: VmxExitReason,
     /// For VM exits resulting from instruction execution, this field receives
     /// the length in bytes of the instruction whose execution led to the VM exit.
     pub exit_instruction_length: u32,
@@ -684,15 +685,15 @@ pub fn ept_violation_info() -> HyperResult<NestedPageFaultInfo> {
     // SDM Vol. 3C, Section 27.2.1, Table 27-7
     let qualification = VmcsReadOnlyNW::EXIT_QUALIFICATION.read()?;
     let fault_guest_paddr = VmcsReadOnly64::GUEST_PHYSICAL_ADDR.read()? as usize;
-    let mut access_flags = MemFlags::empty();
+    let mut access_flags = MappingFlags::empty();
     if qualification.get_bit(0) {
-        access_flags |= MemFlags::READ;
+        access_flags |= MappingFlags::READ;
     }
     if qualification.get_bit(1) {
-        access_flags |= MemFlags::WRITE;
+        access_flags |= MappingFlags::WRITE;
     }
     if qualification.get_bit(2) {
-        access_flags |= MemFlags::EXECUTE;
+        access_flags |= MappingFlags::EXECUTE;
     }
     Ok(NestedPageFaultInfo {
         access_flags,

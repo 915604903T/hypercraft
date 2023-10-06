@@ -4,6 +4,7 @@ mod regs;
 // Codes in this module come mainly from https://github.com/rcore-os/RVM-Tutorial
 
 // mod lapic;
+mod ept;
 mod memory;
 mod msr;
 mod vmx;
@@ -28,9 +29,7 @@ pub enum GprIndex {}
 pub enum HyperCallMsg {}
 
 /// Nested page table define.
-pub struct NestedPageTable<I: PagingIf> {
-    _marker: core::marker::PhantomData<I>,
-}
+pub use ept::ExtendedPageTable as NestedPageTable;
 
 /// VCpu define.
 pub use vmx::VmxVcpu as VCpu;
