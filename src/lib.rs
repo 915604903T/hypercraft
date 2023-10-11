@@ -49,6 +49,9 @@ pub use memory::{
 };
 pub use vcpus::VmCpus;
 
+#[cfg(target_arch = "x86_64")]
+pub use arch::{VmxExitReason, VmxExitInfo};
+
 /// The error type for hypervisor operation failures.
 #[derive(Debug, PartialEq)]
 pub enum HyperError {

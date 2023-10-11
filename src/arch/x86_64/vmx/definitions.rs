@@ -52,7 +52,7 @@ impl Debug for VmxInstructionError {
 numeric_enum_macro::numeric_enum! {
 #[repr(u32)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-#[allow(non_camel_case_types)]
+#[allow(non_camel_case_types, missing_docs)]
 /// VMX basic exit reasons. (SDM Vol. 3D, Appendix C)
 pub enum VmxExitReason {
     EXCEPTION_NMI = 0,

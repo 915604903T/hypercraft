@@ -16,7 +16,7 @@ use super::vmcs::{
 use super::VmxPerCpuState;
 use super::definitions::VmxExitReason;
 use crate::arch::{msr::Msr, memory::NestedPageFaultInfo, regs::GeneralRegisters};
-// use crate::arch::lapic::ApicTimer;
+use crate::arch::lapic::ApicTimer;
 use crate::{GuestPhysAddr, HostPhysAddr, HyperCraftHal, HyperResult};
 
 /// A virtual CPU within a guest.
@@ -26,7 +26,7 @@ pub struct VmxVcpu<H: HyperCraftHal> {
     host_stack_top: u64,
     vmcs: VmxRegion<H>,
     msr_bitmap: MsrBitmap<H>,
-    // apic_timer: ApicTimer<H>,
+    apic_timer: ApicTimer<H>,
     pending_events: VecDeque<(u8, Option<u32>)>,
 }
 
@@ -41,7 +41,7 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
             host_stack_top: 0,
             vmcs: VmxRegion::new(percpu.vmcs_revision_id, false)?,
             msr_bitmap: MsrBitmap::passthrough_all()?,
-            // apic_timer: ApicTimer::new(),
+            apic_timer: ApicTimer::new(),
             pending_events: VecDeque::with_capacity(8),
         };
         vcpu.setup_msr_bitmap()?;
@@ -124,12 +124,10 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
         Ok(())
     }
 
-    /*
     /// Returns the mutable reference of [`ApicTimer`].
     pub fn apic_timer_mut(&mut self) -> &mut ApicTimer<H> {
         &mut self.apic_timer
     }
-     */
 }
 
 // Implementation of private methods
@@ -406,21 +404,27 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
 
         trace!("VM exit: {:#x?}", exit_info);
 
-        if exit_info.exit_reason == VmxExitReason::EXTERNAL_INTERRUPT {
-            let int_info = self.interrupt_exit_info().unwrap();
-        
-            trace!("VM-exit: external interrupt: {:#x?}", int_info);
+        // Handle some vmexits concerning apic timer and events here.
+        // Theoretically the best practice is enabling users to inject
+        // anything they want (including apic timers) to vcpus and let
+        // them handle all vmexits, but it's not very pragmatic now.
+        let result: HyperResult = match exit_info.exit_reason {
+            VmxExitReason::INTERRUPT_WINDOW => self.set_interrupt_window(false),
+            _ => H::vmexit_handler(self),
+        };
+
+        if result.is_err() {
+            panic!(
+                "Failed to handle VM-exit {:?}, error {:?}:\n{:#x?}",
+                exit_info.exit_reason, result.err().unwrap(), self
+            );
         }
 
-        panic!("vm exited, handler to be implemented");
-        // H::vmexit_handler(self);
-        /*
         // Check if there is an APIC timer interrupt
         if self.apic_timer.check_interrupt() {
             self.inject_event(self.apic_timer.vector(), None);
         }
         self.check_pending_events().unwrap();
-         */
     }
 }
 

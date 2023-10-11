@@ -106,7 +106,7 @@ impl<H: HyperCraftHal> ApicTimer<H> {
     pub fn set_lvt_timer(&mut self, bits: u32) -> HyperResult {
         let timer_mode = bits.get_bits(17..19);
         if timer_mode == TimerMode::TscDeadline as _ {
-            return Err(HyperError::Unsupported); // TSC deadline mode was not supported
+            return Err(HyperError::NotSupported); // TSC deadline mode was not supported
         } else if timer_mode == 0b11 {
             return Err(HyperError::InvalidParam); // reserved
         }

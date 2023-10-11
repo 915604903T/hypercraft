@@ -1,4 +1,4 @@
-use crate::{GuestPageTableTrait, HostPageNum, HostPhysAddr, HostVirtAddr, memory::PAGE_SIZE_4K};
+use crate::{GuestPageTableTrait, HostPageNum, HostPhysAddr, HostVirtAddr, HyperResult, memory::PAGE_SIZE_4K};
 
 /// The interfaces which the underlginh software(kernel or hypervisor) must implement.
 pub trait HyperCraftHal: Sized {
@@ -36,4 +36,10 @@ pub trait HyperCraftHal: Sized {
     /// Convert a host virtual address to host physical address.
     #[cfg(target_arch = "x86_64")]
     fn virt_to_phys(va: HostVirtAddr) -> HostPhysAddr;
+    /// VM-Exit handler.
+    #[cfg(target_arch = "x86_64")]
+    fn vmexit_handler(vcpu: &mut crate::arch::VCpu<Self>) -> HyperResult;
+    /// Current time in nanoseconds.
+    #[cfg(target_arch = "x86_64")]
+    fn current_time_nanos() -> u64;
 }

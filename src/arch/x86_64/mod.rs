@@ -3,8 +3,8 @@ mod regs;
 
 // Codes in this module come mainly from https://github.com/rcore-os/RVM-Tutorial
 
-// mod lapic;
 mod ept;
+mod lapic;
 mod memory;
 mod msr;
 mod vmx;
@@ -50,3 +50,5 @@ pub use percpu::PerCpu;
 
 /// VM exit information.
 pub struct VmExitInfo {}
+
+pub use vmx::{VmxExitReason, VmxExitInfo};
