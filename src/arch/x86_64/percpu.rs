@@ -2,7 +2,7 @@ use crate::{HyperCraftHal, HostPhysAddr, GuestPhysAddr};
 use crate::{HyperResult, HyperError};
 use crate::arch::vmx::VmxPerCpuState;
 
-use super::VmxVcpu;
+use super::VCpu;
 
 /// Host per-CPU states to run the guest. All methods must be called on the corresponding CPU.
 pub struct PerCpu<H: HyperCraftHal> {
@@ -50,17 +50,17 @@ impl<H: HyperCraftHal> PerCpu<H> {
         }
     }
 
-    /// Create a [`RvmVcpu`], set the entry point to `entry`, set the nested
+    /// Create a [`VCpu<H>`], set the entry point to `entry`, set the nested
     /// page table root to `npt_root`.
     pub fn create_vcpu(
         &self,
         entry: GuestPhysAddr,
         npt_root: HostPhysAddr,
-    ) -> HyperResult<VmxVcpu<H>> {
+    ) -> HyperResult<VCpu<H>> {
         if !self.is_enabled() {
             Err(HyperError::BadState)
         } else {
-            VmxVcpu::new(&self.arch, entry, npt_root)
+            VCpu::new(&self.arch, entry, npt_root)
         }
     }
 }

@@ -46,7 +46,7 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
         };
         vcpu.setup_msr_bitmap()?;
         vcpu.setup_vmcs(entry, ept_root)?;
-        info!("[RVM] created VmxVcpu(vmcs: {:#x})", vcpu.vmcs.phys_addr());
+        info!("[HV] created VmxVcpu(vmcs: {:#x})", vcpu.vmcs.phys_addr());
         Ok(vcpu)
     }
 
@@ -431,7 +431,7 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
 impl<H: HyperCraftHal> Drop for VmxVcpu<H> {
     fn drop(&mut self) {
         unsafe { vmx::vmclear(self.vmcs.phys_addr() as u64).unwrap() };
-        info!("[RVM] dropped VmxVcpu(vmcs: {:#x})", self.vmcs.phys_addr());
+        info!("[HV] dropped VmxVcpu(vmcs: {:#x})", self.vmcs.phys_addr());
     }
 }
 
