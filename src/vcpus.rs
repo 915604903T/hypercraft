@@ -2,7 +2,9 @@ use alloc::boxed::Box;
 use arrayvec::ArrayVec;
 use spin::Once;
 
-use crate::{GuestPageTableTrait, HyperCraftHal, HyperError, HyperResult, VCpu, VM};
+use crate::arch::{VCpu, VM};
+use crate::{GuestPageTableTrait, HyperCraftHal, HyperError, HyperResult,};
+
 
 /// The maximum number of CPUs we can support.
 pub const MAX_CPUS: usize = 8;

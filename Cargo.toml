@@ -13,9 +13,16 @@ memoffset = { version = ">=0.6.5", features = ["unstable_const"] }
 arrayvec = { version = "0.7.2", default-features = false }
 spin = { version = "0.9", features = ["once", "rwlock", "spin_mutex"] }
 tock-registers = "0.8.1"
+
+cortex-a = "8.1.1"
+aarch64-cpu = "9.3"
+
 # arceos crates
 page_table = { path = "../page_table" }
 page_table_entry = { path = "../page_table_entry" }
+arm_gic = { path = "../arm_gic" }
+spinlock = { path = "../spinlock" }
+
 memory_addr = { path = "../memory_addr" }
 
 [target.'cfg(target_arch = "riscv64")'.dependencies]
