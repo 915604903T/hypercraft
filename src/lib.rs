@@ -7,12 +7,14 @@
     clippy::collapsible_match,
     clippy::default_constructed_unit_structs,
     dead_code,
+    non_camel_case_types,
     non_upper_case_globals,
     unused_imports,
     unused_assignments
 )]
 #![deny(missing_docs, warnings)]
 #![feature(naked_functions, asm_const, negative_impls, stdsimd)]
+#![feature(concat_idents)]
 
 extern crate alloc;
 
@@ -23,7 +25,7 @@ extern crate log;
 #[path = "arch/riscv/mod.rs"]
 mod arch;
 #[cfg(target_arch = "x86_64")]
-#[path = "arch/dummy.rs"]
+#[path = "arch/x86_64/mod.rs"]
 mod arch;
 #[cfg(target_arch = "aarch64")]
 #[path = "arch/dummy.rs"]
@@ -46,6 +48,9 @@ pub use memory::{
     HostVirtAddr,
 };
 pub use vcpus::VmCpus;
+
+#[cfg(target_arch = "x86_64")]
+pub use arch::{VmxExitReason, VmxExitInfo};
 
 /// The error type for hypervisor operation failures.
 #[derive(Debug, PartialEq)]
@@ -72,4 +77,6 @@ pub enum HyperError {
     PageFault,
     /// Decode error.
     DecodeError,
+    /// Disabled.
+    Disabled,
 }
