@@ -14,10 +14,7 @@
 )]
 #![deny(missing_docs, warnings)]
 
-#![feature(naked_functions, asm_const, negative_impls, stdsimd, inline_const)]
-#![feature(concat_idents)]
-
-extern crate alloc;
+#![feature(naked_functions, asm_const, negative_impls, stdsimd, inline_const, concat_idents)]
 
 #[macro_use]
 extern crate log;
@@ -43,7 +40,7 @@ mod vcpus;
 pub type HyperResult<T = ()> = Result<T, HyperError>;
 
 
-#[cfg(target_arch = "riscv64")]
+#[cfg(not(target_arch = "aarch64"))]
 pub use arch::{
     init_hv_runtime, GprIndex, HyperCallMsg, VmExitInfo,
 };
