@@ -6,7 +6,7 @@ use crate::arch::msr::{Msr, MsrReadWrite, VmxBasic, FeatureControl, FeatureContr
 use super::detect::has_hardware_support;
 use super::region::VmxRegion;
 
-/// State per vmx virtual cpu.
+/// State per vmx physical cpu.
 pub struct VmxPerCpuState<H: HyperCraftHal> {
     pub(super) vmcs_revision_id: u32,
     vmx_region: VmxRegion<H>,
