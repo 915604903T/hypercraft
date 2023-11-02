@@ -3,7 +3,7 @@
 
 ## Build & Run
 
-### Linux
+### Riscv Linux
 **Clone project**
 ```
 # create workspace
@@ -11,7 +11,7 @@ mkdir $(WORKSPACE)
 cd $(WORKSPACE)
 
 # clone project
-git clone https://github.com/KuangjuX/arceos.git
+git clone https://github.com/arceos-hypervisor/arceos.git
 git checkout hypervisor
 git submodule update --init --recursive
 ```
@@ -28,6 +28,29 @@ Download disk file from Baidu Cloud Disk to `$(WORKSPACE)/guest/linux`:
 # build & run
 cd arceos
 make ARCH=riscv64 A=apps/hv HV=y LOG=info run
+```
+### aarch64 nimbos
+**Clone project**
+```
+# create workspace
+mkdir $(WORKSPACE)
+cd $(WORKSPACE)
+
+# clone project
+git clone https://github.com/arceos-hypervisor/arceos.git
+git checkout hypervisor
+git submodule update --init --recursive
+```
+
+**Download Disk File & Linux Binary**  
+
+Download [nimbos image](https://drive.google.com/file/d/1Q3yNmpnh3pamrhHGZV_uz6wUFGklidGk/view?usp=drive_link) from Google Cloud Disk to `$(WORKSPACE)/arceos/apps/hv/guest/nimbos`: 
+
+**Build & Run**
+```
+# build & run
+cd arceos
+make ARCH=aarch64 A=apps/hv HV=y LOG=info GUEST=nimbos run
 ```
 
 ## RoadMap
