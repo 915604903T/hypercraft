@@ -44,7 +44,7 @@ git submodule update --init --recursive
 
 **Download Disk File & Linux Binary**  
 
-Download [nimbos image](https://drive.google.com/file/d/1Q3yNmpnh3pamrhHGZV_uz6wUFGklidGk/view?usp=drive_link) from Google Cloud Disk to `$(WORKSPACE)/arceos/apps/hv/guest/nimbos`: 
+Download nimbos-aarch64.bin in [nimbos](https://drive.google.com/drive/folders/1Hfn6RI0GsNxoAmMQ1Gj1kZdcm_NkhRP0?usp=sharing) from Google Cloud Disk to `$(WORKSPACE)/arceos/apps/hv/guest/nimbos`: 
 
 **Build & Run**
 ```
