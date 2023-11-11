@@ -4,6 +4,7 @@ use core::{arch::asm, mem::size_of};
 
 use bit_field::BitField;
 use x86::bits64::vmx;
+use x86::controlregs::{ Xcr0, xcr0 as xcr0_read, xcr0_write };
 use x86::dtables::{self, DescriptorTablePointer};
 use x86::segmentation::SegmentSelector;
 use x86_64::registers::control::{Cr0, Cr0Flags, Cr3, Cr4, Cr4Flags};
@@ -17,7 +18,28 @@ use super::VmxPerCpuState;
 use super::definitions::VmxExitReason;
 use crate::arch::{msr::Msr, memory::NestedPageFaultInfo, regs::GeneralRegisters};
 use crate::arch::lapic::ApicTimer;
-use crate::{GuestPhysAddr, HostPhysAddr, HyperCraftHal, HyperResult};
+use crate::{GuestPhysAddr, HostPhysAddr, HyperCraftHal, HyperResult, HyperError};
+
+pub struct XState {
+    host_xcr0: u64,
+    guest_xcr0: u64,
+    host_xss: u64,
+    guest_xss: u64,
+}
+
+impl XState {
+    /// Create a new [`XState`] instance with current host state
+    fn new() -> Self {
+        let xcr0 = unsafe { xcr0_read().bits() };
+        let xss = Msr::IA32_XSS.read();
+
+        Self { host_xcr0: xcr0, guest_xcr0: xcr0, host_xss: xss, guest_xss: xss }
+    }
+
+    fn enable_xsave() {
+        unsafe { Cr4::write(Cr4::read() | Cr4Flags::OSXSAVE) };
+    }
+}
 
 /// A virtual CPU within a guest.
 #[repr(C)]
@@ -28,6 +50,7 @@ pub struct VmxVcpu<H: HyperCraftHal> {
     msr_bitmap: MsrBitmap<H>,
     apic_timer: ApicTimer<H>,
     pending_events: VecDeque<(u8, Option<u32>)>,
+    xstate: XState,
 }
 
 impl<H: HyperCraftHal> VmxVcpu<H> {
@@ -36,6 +59,7 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
         entry: GuestPhysAddr,
         ept_root: HostPhysAddr,
     ) -> HyperResult<Self> {
+        XState::enable_xsave();
         let mut vcpu = Self {
             guest_regs: GeneralRegisters::default(),
             host_stack_top: 0,
@@ -43,6 +67,7 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
             msr_bitmap: MsrBitmap::passthrough_all()?,
             apic_timer: ApicTimer::new(),
             pending_events: VecDeque::with_capacity(8),
+            xstate: XState::new(),
         };
         vcpu.setup_msr_bitmap()?;
         vcpu.setup_vmcs(entry, ept_root)?;
@@ -52,6 +77,8 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
 
     /// Run the guest, never return.
     pub fn run(&mut self) -> ! {
+        self.load_guest_xstate();
+
         VmcsHostNW::RSP
             .write(&self.host_stack_top as *const _ as usize)
             .unwrap();
@@ -96,6 +123,16 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
     /// Set guest stack pointer. (`RSP`)
     pub fn set_stack_pointer(&mut self, rsp: usize) {
         VmcsGuestNW::RSP.write(rsp).unwrap()
+    }
+
+    /// Guest rip. (`RIP`)
+    pub fn rip(&self) -> usize {
+        VmcsGuestNW::RIP.read().unwrap()
+    }
+
+    /// Guest cs. (`cs`)
+    pub fn cs(&self) -> u16 {
+        VmcsGuest16::CS_SELECTOR.read().unwrap()
     }
 
     /// Advance guest `RIP` by `instr_len` bytes.
@@ -196,7 +233,7 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
     fn setup_vmcs_guest(&mut self, entry: GuestPhysAddr) -> HyperResult {
         let cr0_guest = Cr0Flags::EXTENSION_TYPE | Cr0Flags::NUMERIC_ERROR;
         let cr0_host_owned =
-            Cr0Flags::NUMERIC_ERROR | Cr0Flags::NOT_WRITE_THROUGH | Cr0Flags::CACHE_DISABLE;
+            Cr0Flags::NUMERIC_ERROR; // | Cr0Flags::NOT_WRITE_THROUGH | Cr0Flags::CACHE_DISABLE;
         let cr0_read_shadow = Cr0Flags::NUMERIC_ERROR;
         VmcsGuestNW::CR0.write(cr0_guest.bits() as _)?;
         VmcsControlNW::CR0_GUEST_HOST_MASK.write(cr0_host_owned.bits() as _)?;
@@ -277,7 +314,7 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
             Msr::IA32_VMX_PROCBASED_CTLS.read() as u32,
             (CpuCtrl::UNCOND_IO_EXITING | CpuCtrl::USE_MSR_BITMAPS | CpuCtrl::SECONDARY_CONTROLS)
                 .bits(),
-            (CpuCtrl::CR3_LOAD_EXITING | CpuCtrl::CR3_STORE_EXITING).bits(),
+            (CpuCtrl::CR3_LOAD_EXITING | CpuCtrl::CR3_STORE_EXITING | CpuCtrl::CR8_LOAD_EXITING | CpuCtrl::CR8_STORE_EXITING).bits(),
         )?;
 
         // Enable EPT, RDTSCP, INVPCID, and unrestricted guest.
@@ -396,6 +433,8 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
     }
 
     fn vmexit_handler(&mut self) {
+        self.load_host_xstate();
+
         let exit_info = self.exit_info().unwrap();
 
         if exit_info.entry_failure {
@@ -410,6 +449,49 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
         // them handle all vmexits, but it's not very pragmatic now.
         let result: HyperResult = match exit_info.exit_reason {
             VmxExitReason::INTERRUPT_WINDOW => self.set_interrupt_window(false),
+            VmxExitReason::XSETBV => {
+                const XCR_XCR0: u64 = 0;
+                const VM_EXIT_INSTR_LEN_XSETBV: u8 = 3;
+
+                let index = self.guest_regs.rcx.get_bits(0..32);
+                let value = self.guest_regs.rdx.get_bits(0..32) << 32 | self.guest_regs.rax.get_bits(0..32);
+
+                // TODO: get host-supported xcr0 mask by cpuid and reject any guest-xsetbv violating that
+                if index == XCR_XCR0 {
+                    Xcr0::from_bits(value).and_then(|x| {
+                        if !x.contains(Xcr0::XCR0_FPU_MMX_STATE) {
+                            return None;
+                        } 
+                        
+                        if x.contains(Xcr0::XCR0_AVX_STATE) && !x.contains(Xcr0::XCR0_SSE_STATE) {
+                            return None;
+                        }
+
+                        if x.contains(Xcr0::XCR0_BNDCSR_STATE) ^ x.contains(Xcr0::XCR0_BNDREG_STATE) {
+                            return None;
+                        }
+
+                        if x.contains(Xcr0::XCR0_OPMASK_STATE) || x.contains(Xcr0::XCR0_ZMM_HI256_STATE) || x.contains(Xcr0::XCR0_HI16_ZMM_STATE) {
+                            if !x.contains(Xcr0::XCR0_AVX_STATE) || !x.contains(Xcr0::XCR0_OPMASK_STATE) || !x.contains(Xcr0::XCR0_ZMM_HI256_STATE) || !x.contains(Xcr0::XCR0_HI16_ZMM_STATE) {
+                                return None;
+                            }
+                        }
+
+                        Some(x)
+                    })
+                    .ok_or(HyperError::InvalidParam)
+                    .and_then(|x| {
+                        self.xstate.guest_xcr0 = x.bits();
+                        self.advance_rip(VM_EXIT_INSTR_LEN_XSETBV)
+                    })
+                } else {
+                    // xcr0 only
+                    Err(crate::HyperError::NotSupported)
+                }
+            }
+            VmxExitReason::CR_ACCESS => {
+                panic!("cr_access: {:#x?}, {:#x?}", self, vmcs::cr_access_info());
+            }
             _ => H::vmexit_handler(self),
         };
 
@@ -422,9 +504,26 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
 
         // Check if there is an APIC timer interrupt
         if self.apic_timer.check_interrupt() {
+            debug!("inject apic timer event");
             self.inject_event(self.apic_timer.vector(), None);
         }
         self.check_pending_events().unwrap();
+
+        self.load_guest_xstate();
+    }
+
+    fn load_guest_xstate(&mut self) {
+        unsafe {
+            xcr0_write(Xcr0::from_bits_unchecked(self.xstate.guest_xcr0));
+            Msr::IA32_XSS.write(self.xstate.guest_xss);
+        }
+    }
+
+    fn load_host_xstate(&mut self) {
+        unsafe {
+            xcr0_write(Xcr0::from_bits_unchecked(self.xstate.host_xcr0));
+            Msr::IA32_XSS.write(self.xstate.host_xss);
+        }
     }
 }
 

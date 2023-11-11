@@ -541,6 +541,15 @@ pub struct VmxIoExitInfo {
     pub port: u16,
 }
 
+/// Exit Qualification for Control Register Accesses. (SDM Vol. 3C, Section 28.2.1, Table 28-5)
+#[derive(Debug)]
+pub struct CrAccessInfo {
+    /// Number of control register accessed.
+    pub cr_number: u8,
+    ///
+    pub access_type: u8,
+}
+
 pub mod controls {
     pub use x86::vmx::vmcs::control::{EntryControls, ExitControls};
     pub use x86::vmx::vmcs::control::{PinbasedControls, PrimaryControls, SecondaryControls};
@@ -701,6 +710,13 @@ pub fn ept_violation_info() -> HyperResult<NestedPageFaultInfo> {
     })
 }
 
+pub fn cr_access_info() -> HyperResult<CrAccessInfo> {
+    let qualification = VmcsReadOnlyNW::EXIT_QUALIFICATION.read()?;
+    Ok(CrAccessInfo {
+        cr_number: qualification.get_bits(0..4) as u8,
+        access_type: qualification.get_bits(4..6) as u8, 
+    })
+}
 
 /// Helper used to extract VMX-specific Result in accordance with
 /// conventions described in Intel SDM, Volume 3C, Section 30.2.

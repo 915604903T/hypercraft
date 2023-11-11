@@ -27,6 +27,7 @@ pub struct ApicTimer<H: HyperCraftHal> {
     last_start_ns: u64,
     deadline_ns: u64,
     _phantom: PhantomData<H>,
+    tpr: u32,
 }
 
 impl<H: HyperCraftHal> ApicTimer<H> {
@@ -38,6 +39,7 @@ impl<H: HyperCraftHal> ApicTimer<H> {
             last_start_ns: 0,
             deadline_ns: 0,
             _phantom: PhantomData,
+            tpr: 0,
         }
     }
 
@@ -141,5 +143,13 @@ impl<H: HyperCraftHal> ApicTimer<H> {
         } else {
             self.deadline_ns = 0;
         }
+    }
+
+    pub fn tpr(&self) -> u32 {
+        self.tpr
+    }
+
+    pub fn set_tpr(&mut self, value: u32) {
+        self.tpr = value;
     }
 }
