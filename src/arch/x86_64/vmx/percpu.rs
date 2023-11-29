@@ -106,6 +106,10 @@ impl<H: HyperCraftHal> VmxPerCpuState<H> {
         self.vmx_region = unsafe { VmxRegion::uninit() };
         Ok(())
     }
+
+    pub fn vmcs_revision_id(&self) -> u32 {
+        self.vmcs_revision_id
+    }
 }
 
 impl From<VmFail> for HyperError {

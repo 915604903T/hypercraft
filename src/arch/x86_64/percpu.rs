@@ -50,18 +50,9 @@ impl<H: HyperCraftHal> PerCpu<H> {
         }
     }
 
-    /// Create a [`VCpu<H>`], set the entry point to `entry`, set the nested
-    /// page table root to `npt_root`.
-    pub fn create_vcpu(
-        &self,
-        entry: GuestPhysAddr,
-        npt_root: HostPhysAddr,
-    ) -> HyperResult<VCpu<H>> {
-        if !self.is_enabled() {
-            Err(HyperError::BadState)
-        } else {
-            VCpu::new(&self.arch, entry, npt_root)
-        }
+    /// Get current vmcs revision id.
+    pub fn vmcs_revision_id(&self) -> u32 {
+        self.arch.vmcs_revision_id()
     }
 }
 

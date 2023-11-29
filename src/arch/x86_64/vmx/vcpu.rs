@@ -44,8 +44,11 @@ impl XState {
 /// A virtual CPU within a guest.
 #[repr(C)]
 pub struct VmxVcpu<H: HyperCraftHal> {
+    // DO NOT modify `guest_regs` and `host_stack_top` and their order unless you do know what you are doing!
+    // DO NOT add anything before or between them unless you do know what you are doing!
     guest_regs: GeneralRegisters,
     host_stack_top: u64,
+    vcpu_id: usize,
     vmcs: VmxRegion<H>,
     msr_bitmap: MsrBitmap<H>,
     apic_timer: ApicTimer<H>,
@@ -54,16 +57,19 @@ pub struct VmxVcpu<H: HyperCraftHal> {
 }
 
 impl<H: HyperCraftHal> VmxVcpu<H> {
-    pub(crate) fn new(
-        percpu: &VmxPerCpuState<H>,
+    /// Create a new [`VmxVcpu`].
+    pub fn new(
+        vcpu_id: usize,
+        vmcs_revision_id: u32,
         entry: GuestPhysAddr,
         ept_root: HostPhysAddr,
     ) -> HyperResult<Self> {
         XState::enable_xsave();
         let mut vcpu = Self {
+            vcpu_id,
             guest_regs: GeneralRegisters::default(),
             host_stack_top: 0,
-            vmcs: VmxRegion::new(percpu.vmcs_revision_id, false)?,
+            vmcs: VmxRegion::new(vmcs_revision_id, false)?,
             msr_bitmap: MsrBitmap::passthrough_all()?,
             apic_timer: ApicTimer::new(),
             pending_events: VecDeque::with_capacity(8),
@@ -73,6 +79,23 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
         vcpu.setup_vmcs(entry, ept_root)?;
         info!("[HV] created VmxVcpu(vmcs: {:#x})", vcpu.vmcs.phys_addr());
         Ok(vcpu)
+    }
+
+    /// Get the identifier of this [`VmxVcpu`].
+    pub fn vcpu_id(&self) -> usize {
+        self.vcpu_id
+    }
+
+    /// Bind this [`VmxVcpu`] to current logical processor.
+    pub fn bind_to_current_processor(&self) -> HyperResult {
+        unsafe { vmx::vmptrld(self.vmcs.phys_addr() as u64)?; }
+        Ok(())
+    }
+
+    /// Unbind this [`VmxVcpu`] from current logical processor.
+    pub fn unbind_from_current_processor(&self) -> HyperResult {
+        unsafe { vmx::vmclear(self.vmcs.phys_addr() as u64)?;  }
+        Ok(())
     }
 
     /// Run the guest, never return.
@@ -186,11 +209,12 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
         let paddr = self.vmcs.phys_addr() as u64;
         unsafe {
             vmx::vmclear(paddr)?;
-            vmx::vmptrld(paddr)?;
         }
+        self.bind_to_current_processor()?;
         self.setup_vmcs_host()?;
         self.setup_vmcs_guest(entry)?;
         self.setup_vmcs_control(ept_root)?;
+        self.unbind_from_current_processor()?;
         Ok(())
     }
 

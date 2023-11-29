@@ -3,6 +3,7 @@ mod regs;
 
 // Codes in this module come mainly from https://github.com/rcore-os/RVM-Tutorial
 
+mod device;
 mod ept;
 mod lapic;
 mod memory;
@@ -10,7 +11,8 @@ mod msr;
 mod vmx;
 mod percpu;
 
-use crate::{GuestPageTableTrait, HyperCraftHal};
+use crate::{GuestPageTableTrait, HyperCraftHal, VmCpus, HyperResult, vcpus, HyperError};
+use bit_set::BitSet;
 use page_table::PagingIf;
 
 /// Initialize the hypervisor runtime.
@@ -28,19 +30,58 @@ pub use vmx::VmxVcpu as VCpu;
 pub use percpu::PerCpu;
 pub use vmx::{VmxExitReason, VmxExitInfo};
 
+pub use device::{Devices, PortIoDevice};
+
 ////// Following are things to be implemented
-
-
-impl<H: HyperCraftHal> VCpu<H> {
-    /// Get the vcpu id.
-    pub fn vcpu_id(&self) -> usize {
-        todo!()
-    }
-}
 
 /// VM define.
 pub struct VM<H: HyperCraftHal> {
-    _marker: core::marker::PhantomData<H>,
+    vcpus: VmCpus<H>,
+    vcpu_bond: BitSet,
+}
+
+impl<H: HyperCraftHal> VM<H> {
+    /// Create a new [`VM`].
+    pub fn new(vcpus: VmCpus<H>) -> Self {
+        Self { vcpus, vcpu_bond: BitSet::new() }
+    }
+
+    /// Bind the specified [`VCpu`] to current physical processor.
+    pub fn bind_vcpu(&mut self, vcpu_id: usize) -> HyperResult<&mut VCpu<H>> {
+        if self.vcpu_bond.contains(vcpu_id) {
+            Err(HyperError::InvalidParam)
+        } else {
+            match self.vcpus.get_vcpu(vcpu_id) {
+                Ok(vcpu) => {
+                    self.vcpu_bond.insert(vcpu_id);
+                    vcpu.bind_to_current_processor()?;
+                    Ok(vcpu)
+                },
+                e @ Err(_) => e,
+            }
+        }
+    }
+
+    /// Run a specified [`VCpu`] on current logical vcpu.
+    pub fn run_vcpu(&mut self, vcpu_id: usize) -> ! {
+        self.vcpus.get_vcpu(vcpu_id).unwrap().run();
+    }
+
+    /// Unbind the specified [`VCpu`] gotten by [`VM<H>::bind_vcpu`].
+    pub fn unbind_vcpu(&mut self, vcpu_id: usize) -> HyperResult {
+        if self.vcpu_bond.contains(vcpu_id) {
+            match self.vcpus.get_vcpu(vcpu_id) {
+                Ok(vcpu) => {
+                    self.vcpu_bond.remove(vcpu_id);
+                    vcpu.unbind_from_current_processor()?;
+                    Ok(())
+                },
+                Err(e) => Err(e),
+            }
+        } else {
+            Err(HyperError::InvalidParam)
+        }
+    }
 }
 
 /// VM exit information.
