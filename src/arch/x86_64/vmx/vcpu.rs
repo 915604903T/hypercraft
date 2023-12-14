@@ -17,8 +17,7 @@ use super::vmcs::{
 use super::VmxPerCpuState;
 use super::definitions::VmxExitReason;
 use crate::arch::{msr::Msr, memory::NestedPageFaultInfo, regs::GeneralRegisters};
-use crate::arch::lapic::ApicTimer;
-use crate::{GuestPhysAddr, HostPhysAddr, HyperCraftHal, HyperResult, HyperError};
+use crate::{GuestPhysAddr, HostPhysAddr, HyperCraftHal, HyperResult, HyperError, VmxExitInfo};
 
 pub struct XState {
     host_xcr0: u64,
@@ -49,9 +48,9 @@ pub struct VmxVcpu<H: HyperCraftHal> {
     guest_regs: GeneralRegisters,
     host_stack_top: u64,
     vcpu_id: usize,
+    launched: bool,
     vmcs: VmxRegion<H>,
     msr_bitmap: MsrBitmap<H>,
-    apic_timer: ApicTimer<H>,
     pending_events: VecDeque<(u8, Option<u32>)>,
     xstate: XState,
 }
@@ -66,12 +65,12 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
     ) -> HyperResult<Self> {
         XState::enable_xsave();
         let mut vcpu = Self {
-            vcpu_id,
             guest_regs: GeneralRegisters::default(),
             host_stack_top: 0,
+            vcpu_id,
+            launched: false,
             vmcs: VmxRegion::new(vmcs_revision_id, false)?,
             msr_bitmap: MsrBitmap::passthrough_all()?,
-            apic_timer: ApicTimer::new(),
             pending_events: VecDeque::with_capacity(8),
             xstate: XState::new(),
         };
@@ -98,14 +97,41 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
         Ok(())
     }
 
-    /// Run the guest, never return.
-    pub fn run(&mut self) -> ! {
+    /// Run the guest. It returns when a vm-exit happens and returns the vm-exit if it cannot be handled by this [`VmxVcpu`] itself.
+    pub fn run(&mut self) -> Option<VmxExitInfo> {
+        // Inject pending events
+        if self.launched {
+            self.inject_pending_events().unwrap();
+        }
+        
+        // Run guest
         self.load_guest_xstate();
+        unsafe { 
+            if self.launched {
+                self.vmx_resume();
+            } else {
+                self.launched = true;
+                VmcsHostNW::RSP.write(&self.host_stack_top as *const _ as usize).unwrap();
 
-        VmcsHostNW::RSP
-            .write(&self.host_stack_top as *const _ as usize)
-            .unwrap();
-        unsafe { self.vmx_launch() }
+                self.vmx_launch();
+            }
+        }
+        self.load_host_xstate();
+
+        // Handle vm-exits
+        let exit_info = self.exit_info().unwrap();
+        trace!("VM exit: {:#x?}", exit_info);    
+
+        match self.builtin_vmexit_handler(&exit_info) {
+            Some(result) => {   
+                if result.is_err() {
+                    panic!("VmxVcpu failed to handle a VM-exit that should be handled by itself: {:?}, error {:?}, vcpu: {:#x?}", exit_info.exit_reason, result.unwrap_err(), self);
+                }
+
+                None
+            },
+            None => Some(exit_info),
+        }
     }
 
     /// Basic information about VM exits.
@@ -165,7 +191,7 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
 
     /// Add a virtual interrupt or exception to the pending events list,
     /// and try to inject it before later VM entries.
-    pub fn inject_event(&mut self, vector: u8, err_code: Option<u32>) {
+    pub fn queue_event(&mut self, vector: u8, err_code: Option<u32>) {
         self.pending_events.push_back((vector, err_code));
     }
 
@@ -182,11 +208,6 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
         }
         VmcsControl32::PRIMARY_PROCBASED_EXEC_CONTROLS.write(ctrl)?;
         Ok(())
-    }
-
-    /// Returns the mutable reference of [`ApicTimer`].
-    pub fn apic_timer_mut(&mut self) -> &mut ApicTimer<H> {
-        &mut self.apic_timer
     }
 }
 
@@ -396,35 +417,58 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
         Ok(())
     }
 
-    #[naked]
-    unsafe extern "C" fn vmx_launch(&mut self) -> ! {
+}
+
+/// Get ready then vmlaunch or vmresume.
+macro_rules! vmx_entry_with {
+    ($instr:literal) => {
         asm!(
+            save_regs_to_stack!(),                  // save host status
             "mov    [rdi + {host_stack_top}], rsp", // save current RSP to Vcpu::host_stack_top
             "mov    rsp, rdi",                      // set RSP to guest regs area
-            restore_regs_from_stack!(),
-            "vmlaunch",
+            restore_regs_from_stack!(),             // restore guest status
+            $instr,                                 // let's go!
             "jmp    {failed}",
             host_stack_top = const size_of::<GeneralRegisters>(),
             failed = sym Self::vmx_entry_failed,
             options(noreturn),
         )
     }
+}
+
+impl<H: HyperCraftHal> VmxVcpu<H> {
+    
+    #[naked]
+    /// Enter guest with vmlaunch.
+    /// 
+    /// `#[naked]` is essential here, without it the rust compiler will think `&mut self` is not used and won't give us correct %rdi.
+    /// 
+    /// This function itself never returns, but [`Self::vmx_exit`] will do the return for this.
+    /// 
+    /// The return value is a dummy value.
+    unsafe extern "C" fn vmx_launch(&mut self) -> usize {
+        vmx_entry_with!("vmlaunch")
+    }
 
     #[naked]
-    unsafe extern "C" fn vmx_exit(&mut self) -> ! {
+    /// Enter guest with vmresume.
+    /// 
+    /// See [`Self::vmx_launch`] for detail.
+    unsafe extern "C" fn vmx_resume(&mut self) -> usize {
+        vmx_entry_with!("vmresume")
+    }
+
+    #[naked]
+    /// Return after vm-exit.
+    /// 
+    /// The return value is a dummy value.
+    unsafe extern "C" fn vmx_exit(&mut self) -> usize {
         asm!(
-            save_regs_to_stack!(),
-            "mov    r15, rsp",                      // save temporary RSP to r15
-            "mov    rdi, rsp",                      // set the first arg to &Vcpu
+            save_regs_to_stack!(),                  // save guest status
             "mov    rsp, [rsp + {host_stack_top}]", // set RSP to Vcpu::host_stack_top
-            "call   {vmexit_handler}",              // call vmexit_handler
-            "mov    rsp, r15",                      // load temporary RSP from r15
-            restore_regs_from_stack!(),
-            "vmresume",
-            "jmp    {failed}",
+            restore_regs_from_stack!(),             // restore host status
+            "ret",
             host_stack_top = const size_of::<GeneralRegisters>(),
-            vmexit_handler = sym Self::vmexit_handler,
-            failed = sym Self::vmx_entry_failed,
             options(noreturn),
         );
     }
@@ -442,7 +486,7 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
     }
 
     /// Try to inject a pending event before next VM entry.
-    fn check_pending_events(&mut self) -> HyperResult {
+    fn inject_pending_events(&mut self) -> HyperResult {
         if let Some(event) = self.pending_events.front() {
             if event.0 < 32 || self.allow_interrupt() {
                 // if it's an exception, or an interrupt that is not blocked, inject it directly.
@@ -456,84 +500,65 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
         Ok(())
     }
 
-    fn vmexit_handler(&mut self) {
-        self.load_host_xstate();
-
-        let exit_info = self.exit_info().unwrap();
-
+    /// Handle vm-exits than can and should be handled by [`VmxVcpu`] itself.
+    /// 
+    /// Return the result or None if the vm-exit was not handled.
+    fn builtin_vmexit_handler(&mut self, exit_info: &VmxExitInfo) -> Option<HyperResult> {
         if exit_info.entry_failure {
             panic!("VM entry failed: {:#x?}", exit_info);
         }
 
-        trace!("VM exit: {:#x?}", exit_info);
+        // Following vm-exits are handled here:
+        // - interrupt window: turn off interrupt window;
+        // - xsetbv: set guest xcr;
+        // - cr access: just panic;
+        match exit_info.exit_reason {
+            VmxExitReason::INTERRUPT_WINDOW => Some(self.set_interrupt_window(false)),
+            VmxExitReason::XSETBV => Some(self.handle_xsetbv()),
+            VmxExitReason::CR_ACCESS => panic!("Guest's access to cr not allowed: {:#x?}, {:#x?}", self, vmcs::cr_access_info()),
+            _ => None,
+        }
+    }
 
-        // Handle some vmexits concerning apic timer and events here.
-        // Theoretically the best practice is enabling users to inject
-        // anything they want (including apic timers) to vcpus and let
-        // them handle all vmexits, but it's not very pragmatic now.
-        let result: HyperResult = match exit_info.exit_reason {
-            VmxExitReason::INTERRUPT_WINDOW => self.set_interrupt_window(false),
-            VmxExitReason::XSETBV => {
-                const XCR_XCR0: u64 = 0;
-                const VM_EXIT_INSTR_LEN_XSETBV: u8 = 3;
+    fn handle_xsetbv(&mut self) -> HyperResult {
+        const XCR_XCR0: u64 = 0;
+        const VM_EXIT_INSTR_LEN_XSETBV: u8 = 3;
 
-                let index = self.guest_regs.rcx.get_bits(0..32);
-                let value = self.guest_regs.rdx.get_bits(0..32) << 32 | self.guest_regs.rax.get_bits(0..32);
+        let index = self.guest_regs.rcx.get_bits(0..32);
+        let value = self.guest_regs.rdx.get_bits(0..32) << 32 | self.guest_regs.rax.get_bits(0..32);
 
-                // TODO: get host-supported xcr0 mask by cpuid and reject any guest-xsetbv violating that
-                if index == XCR_XCR0 {
-                    Xcr0::from_bits(value).and_then(|x| {
-                        if !x.contains(Xcr0::XCR0_FPU_MMX_STATE) {
-                            return None;
-                        } 
-                        
-                        if x.contains(Xcr0::XCR0_AVX_STATE) && !x.contains(Xcr0::XCR0_SSE_STATE) {
-                            return None;
-                        }
-
-                        if x.contains(Xcr0::XCR0_BNDCSR_STATE) ^ x.contains(Xcr0::XCR0_BNDREG_STATE) {
-                            return None;
-                        }
-
-                        if x.contains(Xcr0::XCR0_OPMASK_STATE) || x.contains(Xcr0::XCR0_ZMM_HI256_STATE) || x.contains(Xcr0::XCR0_HI16_ZMM_STATE) {
-                            if !x.contains(Xcr0::XCR0_AVX_STATE) || !x.contains(Xcr0::XCR0_OPMASK_STATE) || !x.contains(Xcr0::XCR0_ZMM_HI256_STATE) || !x.contains(Xcr0::XCR0_HI16_ZMM_STATE) {
-                                return None;
-                            }
-                        }
-
-                        Some(x)
-                    })
-                    .ok_or(HyperError::InvalidParam)
-                    .and_then(|x| {
-                        self.xstate.guest_xcr0 = x.bits();
-                        self.advance_rip(VM_EXIT_INSTR_LEN_XSETBV)
-                    })
-                } else {
-                    // xcr0 only
-                    Err(crate::HyperError::NotSupported)
+        // TODO: get host-supported xcr0 mask by cpuid and reject any guest-xsetbv violating that
+        if index == XCR_XCR0 {
+            Xcr0::from_bits(value).and_then(|x| {
+                if !x.contains(Xcr0::XCR0_FPU_MMX_STATE) {
+                    return None;
+                } 
+        
+                if x.contains(Xcr0::XCR0_AVX_STATE) && !x.contains(Xcr0::XCR0_SSE_STATE) {
+                    return None;
                 }
-            }
-            VmxExitReason::CR_ACCESS => {
-                panic!("cr_access: {:#x?}, {:#x?}", self, vmcs::cr_access_info());
-            }
-            _ => H::vmexit_handler(self),
-        };
 
-        if result.is_err() {
-            panic!(
-                "Failed to handle VM-exit {:?}, error {:?}:\n{:#x?}",
-                exit_info.exit_reason, result.err().unwrap(), self
-            );
+                if x.contains(Xcr0::XCR0_BNDCSR_STATE) ^ x.contains(Xcr0::XCR0_BNDREG_STATE) {
+                    return None;
+                }
+
+                if x.contains(Xcr0::XCR0_OPMASK_STATE) || x.contains(Xcr0::XCR0_ZMM_HI256_STATE) || x.contains(Xcr0::XCR0_HI16_ZMM_STATE) {
+                    if !x.contains(Xcr0::XCR0_AVX_STATE) || !x.contains(Xcr0::XCR0_OPMASK_STATE) || !x.contains(Xcr0::XCR0_ZMM_HI256_STATE) || !x.contains(Xcr0::XCR0_HI16_ZMM_STATE) {
+                        return None;
+                    }
+                }
+
+                Some(x)
+            })
+            .ok_or(HyperError::InvalidParam)
+            .and_then(|x| {
+                self.xstate.guest_xcr0 = x.bits();
+                self.advance_rip(VM_EXIT_INSTR_LEN_XSETBV)
+            })
+        } else {
+            // xcr0 only
+            Err(crate::HyperError::NotSupported)
         }
-
-        // Check if there is an APIC timer interrupt
-        if self.apic_timer.check_interrupt() {
-            debug!("inject apic timer event");
-            self.inject_event(self.apic_timer.vector(), None);
-        }
-        self.check_pending_events().unwrap();
-
-        self.load_guest_xstate();
     }
 
     fn load_guest_xstate(&mut self) {

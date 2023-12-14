@@ -3,15 +3,15 @@ mod regs;
 
 // Codes in this module come mainly from https://github.com/rcore-os/RVM-Tutorial
 
-mod device;
 mod ept;
-mod lapic;
 mod memory;
 mod msr;
 mod vmx;
 mod percpu;
 
-use crate::{GuestPageTableTrait, HyperCraftHal, VmCpus, HyperResult, vcpus, HyperError};
+use core::marker::PhantomData;
+
+use crate::{GuestPageTableTrait, HyperCraftHal, VmCpus, HyperResult, vcpus, HyperError, hal::{PerCpuDevices, PerVmDevices}};
 use bit_set::BitSet;
 use page_table::PagingIf;
 
@@ -30,48 +30,73 @@ pub use vmx::VmxVcpu as VCpu;
 pub use percpu::PerCpu;
 pub use vmx::{VmxExitReason, VmxExitInfo};
 
-pub use device::{Devices, PortIoDevice};
+// pub use device::{Devices, PortIoDevice};
 
 ////// Following are things to be implemented
 
 /// VM define.
-pub struct VM<H: HyperCraftHal> {
-    vcpus: VmCpus<H>,
+pub struct VM<H: HyperCraftHal, PD: PerCpuDevices<H>, VD: PerVmDevices<H>> {
+    vcpus: VmCpus<H, PD>,
     vcpu_bond: BitSet,
+    device: VD,
 }
 
-impl<H: HyperCraftHal> VM<H> {
+impl<H: HyperCraftHal, PD: PerCpuDevices<H>, VD: PerVmDevices<H>> VM<H, PD, VD> {
     /// Create a new [`VM`].
-    pub fn new(vcpus: VmCpus<H>) -> Self {
-        Self { vcpus, vcpu_bond: BitSet::new() }
+    pub fn new(vcpus: VmCpus<H, PD>) -> Self {
+        Self { vcpus, vcpu_bond: BitSet::new(), device: VD::new().unwrap() }
     }
 
     /// Bind the specified [`VCpu`] to current physical processor.
-    pub fn bind_vcpu(&mut self, vcpu_id: usize) -> HyperResult<&mut VCpu<H>> {
+    pub fn bind_vcpu(&mut self, vcpu_id: usize) -> HyperResult<(&mut VCpu<H>, &mut PD)> {
         if self.vcpu_bond.contains(vcpu_id) {
             Err(HyperError::InvalidParam)
         } else {
-            match self.vcpus.get_vcpu(vcpu_id) {
-                Ok(vcpu) => {
+            match self.vcpus.get_vcpu_and_device(vcpu_id) {
+                Ok((vcpu, device)) => {
                     self.vcpu_bond.insert(vcpu_id);
                     vcpu.bind_to_current_processor()?;
-                    Ok(vcpu)
+                    Ok((vcpu, device))
                 },
                 e @ Err(_) => e,
             }
         }
     }
 
+    #[allow(unreachable_code)]
     /// Run a specified [`VCpu`] on current logical vcpu.
-    pub fn run_vcpu(&mut self, vcpu_id: usize) -> ! {
-        self.vcpus.get_vcpu(vcpu_id).unwrap().run();
+    pub fn run_vcpu(&mut self, vcpu_id: usize) -> HyperResult {
+        let (vcpu, vcpu_device) = self.vcpus.get_vcpu_and_device(vcpu_id).unwrap();
+        
+        loop {
+            if let Some(exit_info) = vcpu.run() {
+                // we need to handle vm-exit this by ourselves
+                let result = vcpu_device.vmexit_handler(vcpu, &exit_info)
+                    .or_else(|| self.device.vmexit_handler(vcpu, &exit_info));
+
+                match result {
+                    Some(result) => {
+                        if result.is_err() {
+                            panic!("VM failed to handle a vm-exit: {:?}, error {:?}, vcpu: {:#x?}", exit_info.exit_reason, result.unwrap_err(), vcpu);
+                        }
+                    },
+                    None => {
+                        panic!("nobody wants to handle this vm-exit: {:?}, vcpu: {:#x?}", exit_info, vcpu);
+                    },
+                }
+            }
+
+            vcpu_device.check_events(vcpu)?;
+        }
+
+        Ok(())
     }
 
-    /// Unbind the specified [`VCpu`] gotten by [`VM<H>::bind_vcpu`].
+    /// Unbind the specified [`VCpu`] bond by [`VM::<H>::bind_vcpu`].
     pub fn unbind_vcpu(&mut self, vcpu_id: usize) -> HyperResult {
         if self.vcpu_bond.contains(vcpu_id) {
-            match self.vcpus.get_vcpu(vcpu_id) {
-                Ok(vcpu) => {
+            match self.vcpus.get_vcpu_and_device(vcpu_id) {
+                Ok((vcpu, _)) => {
                     self.vcpu_bond.remove(vcpu_id);
                     vcpu.unbind_from_current_processor()?;
                     Ok(())
@@ -82,10 +107,20 @@ impl<H: HyperCraftHal> VM<H> {
             Err(HyperError::InvalidParam)
         }
     }
+
+    /// Get per-vm devices.
+    pub fn devices(&mut self) -> &mut VD {
+        &mut self.device
+    }
+
+    /// Get vcpu and its devices by its id.
+    pub fn get_vcpu_and_device(&mut self, vcpu_id: usize) -> HyperResult<(&mut VCpu<H>, &mut PD)> {
+        self.vcpus.get_vcpu_and_device(vcpu_id)
+    }
 }
 
 /// VM exit information.
-pub struct VmExitInfo {}
+pub use VmxExitInfo as VmExitInfo;
 
 /// General purpose register index.
 pub enum GprIndex {}

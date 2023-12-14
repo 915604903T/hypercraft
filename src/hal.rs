@@ -1,4 +1,4 @@
-use crate::{GuestPageTableTrait, HostPageNum, HostPhysAddr, HostVirtAddr, HyperResult, memory::PAGE_SIZE_4K};
+use crate::{GuestPageTableTrait, HostPageNum, HostPhysAddr, HostVirtAddr, HyperResult, memory::PAGE_SIZE_4K, arch::VCpu, VmExitInfo};
 
 /// The interfaces which the underlginh software(kernel or hypervisor) must implement.
 pub trait HyperCraftHal: Sized {
@@ -37,9 +37,29 @@ pub trait HyperCraftHal: Sized {
     #[cfg(target_arch = "x86_64")]
     fn virt_to_phys(va: HostVirtAddr) -> HostPhysAddr;
     /// VM-Exit handler.
-    #[cfg(target_arch = "x86_64")]
-    fn vmexit_handler(vcpu: &mut crate::arch::VCpu<Self>) -> HyperResult;
+    // #[cfg(target_arch = "x86_64")]
+    // fn vmexit_handler(vcpu: &mut VCpu<Self>) -> HyperResult;
     /// Current time in nanoseconds.
     #[cfg(target_arch = "x86_64")]
     fn current_time_nanos() -> u64;
+}
+
+#[cfg(target_arch = "x86_64")]
+/// Virtual devices of a [`VCpu`].
+pub trait PerCpuDevices<H: HyperCraftHal>: Sized {
+    /// Creates a new [`PerCpuDevices`].
+    fn new(vcpu: &VCpu<H>) -> HyperResult<Self>;
+    /// Handles vm-exits.
+    fn vmexit_handler(&mut self, vcpu: &mut VCpu<H>, exit_info: &VmExitInfo) -> Option<HyperResult>;
+    /// Checks whether there are some new events and injects them.
+    fn check_events(&mut self, vcpu: &mut VCpu<H>) -> HyperResult;
+}
+
+#[cfg(target_arch = "x86_64")]
+/// Virtual devices of a vm.
+pub trait PerVmDevices<H: HyperCraftHal>: Sized {
+    /// Creates a new [`PerVmDevices`].
+    fn new() -> HyperResult<Self>;
+    /// Handles vm-exits.
+    fn vmexit_handler(&mut self, vcpu: &mut VCpu<H>, exit_info: &VmExitInfo) -> Option<HyperResult>;
 }

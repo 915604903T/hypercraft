@@ -41,6 +41,7 @@ pub trait PerCpuTrait<H: HyperCraftHal> {
     fn this_cpu() -> &'static mut Self;
 }
 
+#[cfg(not(target_arch = "x86_64"))]
 /// Trait for VM struct.
 pub trait VmTrait<H: HyperCraftHal, G: GuestPageTableTrait> {
     /// Create a new VM with `vcpus` vCPUs and `gpt` as the guest page table.

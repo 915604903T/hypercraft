@@ -484,7 +484,7 @@ pub struct VmxExitInfo {
     /// VM-entry failure. (0 = true VM exit; 1 = VM-entry failure)
     pub entry_failure: bool,
     /// Basic exit reason.
-pub exit_reason: VmxExitReason,
+    pub exit_reason: VmxExitReason,
     /// For VM exits resulting from instruction execution, this field receives
     /// the length in bytes of the instruction whose execution led to the VM exit.
     pub exit_instruction_length: u32,
