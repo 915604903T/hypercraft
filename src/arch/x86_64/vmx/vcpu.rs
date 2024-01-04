@@ -1,4 +1,5 @@
 use alloc::collections::VecDeque;
+use x86_64::registers::debug;
 use core::fmt::{Debug, Formatter, Result};
 use core::{arch::asm, mem::size_of};
 
@@ -121,6 +122,11 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
         // Handle vm-exits
         let exit_info = self.exit_info().unwrap();
         trace!("VM exit: {:#x?}", exit_info);    
+
+        let cr4 = VmcsGuestNW::CR4.read().unwrap();
+        if cr4.get_bit(18) {
+            // panic!("osxsave dead!");
+        }
 
         match self.builtin_vmexit_handler(&exit_info) {
             Some(result) => {   
@@ -371,7 +377,8 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
             (CpuCtrl2::ENABLE_EPT
                 | CpuCtrl2::ENABLE_RDTSCP
                 | CpuCtrl2::ENABLE_INVPCID
-                | CpuCtrl2::UNRESTRICTED_GUEST)
+                | CpuCtrl2::UNRESTRICTED_GUEST
+                | CpuCtrl2::ENABLE_XSAVES_XRSTORS)
                 .bits(),
             0,
         )?;
@@ -409,8 +416,10 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
         VmcsControl32::VMEXIT_MSR_LOAD_COUNT.write(0)?;
         VmcsControl32::VMENTRY_MSR_LOAD_COUNT.write(0)?;
 
-        // Pass-through exceptions, don't use I/O bitmap, set MSR bitmaps.
-        VmcsControl32::EXCEPTION_BITMAP.write(0)?;
+        // Pass-through exceptions (except #UD(6)), don't use I/O bitmap, set MSR bitmaps.
+        let exception_bitmap: u32 = 1 << 6;
+
+        VmcsControl32::EXCEPTION_BITMAP.write(exception_bitmap)?;
         VmcsControl64::IO_BITMAP_A_ADDR.write(0)?;
         VmcsControl64::IO_BITMAP_B_ADDR.write(0)?;
         VmcsControl64::MSR_BITMAPS_ADDR.write(self.msr_bitmap.phys_addr() as _)?;
@@ -516,8 +525,94 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
             VmxExitReason::INTERRUPT_WINDOW => Some(self.set_interrupt_window(false)),
             VmxExitReason::XSETBV => Some(self.handle_xsetbv()),
             VmxExitReason::CR_ACCESS => panic!("Guest's access to cr not allowed: {:#x?}, {:#x?}", self, vmcs::cr_access_info()),
+            VmxExitReason::EXCEPTION_NMI => {
+                let int_info = self.interrupt_exit_info().unwrap();
+
+                error!("exit_info: {:#x?}\nexception: {:#x?}\nvcpu: {:#x?}", exit_info, int_info, self);
+                self.queue_event(int_info.vector, None);
+
+                debug!("CR4.OSXSAVE: {}", VmcsGuestNW::CR4.read().unwrap().get_bit(18));
+                
+                use raw_cpuid::{cpuid, CpuIdResult};
+                let cpuid_01 = cpuid!(0x1, 0x0);
+                debug!("CPUID.01H.ECX: {:#x?}, bit26: {}", cpuid_01.ecx, cpuid_01.ecx.get_bit(26));
+
+                let cpuid_0d_01 = cpuid!(0xd, 0x1);
+                debug!("CPUID.0DH(ECX=1).EAX: {:#x?}, bit3: {}", cpuid_0d_01.eax, cpuid_0d_01.eax.get_bit(3));
+
+                Some(Ok(()))
+            },
+            VmxExitReason::CPUID => Some(self.handle_cpuid()),
             _ => None,
         }
+    }
+
+    fn handle_cpuid(&mut self) -> HyperResult {
+        use raw_cpuid::{cpuid, CpuIdResult};
+
+        const VM_EXIT_INSTR_LEN_CPUID: u8 = 2;
+        const LEAF_FEATURE_INFO: u32 = 0x1;
+        const LEAF_STRUCTURED_EXTENDED_FEATURE_FLAGS_ENUMERATION: u32 = 0x7;
+        const LEAF_PROCESSOR_EXTENDED_STATE_ENUMERATION: u32 = 0xd;
+        const LEAF_HYPERVISOR_INFO: u32 = 0x4000_0000;
+        const LEAF_HYPERVISOR_FEATURE: u32 = 0x4000_0001;
+        const VENDOR_STR: &[u8; 12] = b"RVMRVMRVMRVM";
+        let vendor_regs = unsafe { &*(VENDOR_STR.as_ptr() as *const [u32; 3]) };
+
+        let regs_clone = self.regs_mut().clone();
+        let function = regs_clone.rax as u32;
+        let res = match function {
+            LEAF_FEATURE_INFO => {
+                const FEATURE_VMX: u32 = 1 << 5;
+                const FEATURE_HYPERVISOR: u32 = 1 << 31;
+                let mut res = cpuid!(regs_clone.rax, regs_clone.rcx);
+                res.ecx &= !FEATURE_VMX;
+                res.ecx |= FEATURE_HYPERVISOR;
+                res
+            },
+            LEAF_STRUCTURED_EXTENDED_FEATURE_FLAGS_ENUMERATION => {
+                let mut res = cpuid!(regs_clone.rax, regs_clone.rcx);
+                if regs_clone.rcx == 0 {
+                    res.ecx.set_bit(0x5, false); // clear waitpkg
+                }
+
+                res
+            },
+            LEAF_PROCESSOR_EXTENDED_STATE_ENUMERATION => {
+                self.load_guest_xstate();
+                let res = cpuid!(regs_clone.rax, regs_clone.rcx);
+                self.load_host_xstate();
+
+                res
+            }
+            LEAF_HYPERVISOR_INFO => CpuIdResult {
+                eax: LEAF_HYPERVISOR_FEATURE,
+                ebx: vendor_regs[0],
+                ecx: vendor_regs[1],
+                edx: vendor_regs[2],
+            },
+            LEAF_HYPERVISOR_FEATURE => CpuIdResult {
+                eax: 0,
+                ebx: 0,
+                ecx: 0,
+                edx: 0,
+            },
+            _ => cpuid!(regs_clone.rax, regs_clone.rcx),
+        };
+
+        trace!(
+            "VM exit: CPUID({:#x}, {:#x}): {:?}",
+            regs_clone.rax, regs_clone.rcx, res
+        );
+        
+        let regs = self.regs_mut();
+        regs.rax = res.eax as _;
+        regs.rbx = res.ebx as _;
+        regs.rcx = res.ecx as _;
+        regs.rdx = res.edx as _;
+        self.advance_rip(VM_EXIT_INSTR_LEN_CPUID)?;
+
+        Ok(())
     }
 
     fn handle_xsetbv(&mut self) -> HyperResult {
