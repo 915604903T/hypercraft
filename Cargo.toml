@@ -24,6 +24,7 @@ arm_gic = { path = "../arm_gic" }
 spinlock = { path = "../spinlock" }
 
 memory_addr = { path = "../memory_addr" }
+vm_config = { path = "../vm_config" }
 
 [target.'cfg(target_arch = "riscv64")'.dependencies]
 riscv = { git = "https://github.com/rcore-os/riscv", features = ["inline-asm"] }

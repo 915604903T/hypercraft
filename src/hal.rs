@@ -1,5 +1,6 @@
 use crate::{GuestPageTableTrait, HostPageNum, HostPhysAddr, HostVirtAddr, HyperResult, memory::PAGE_SIZE_4K, arch::VCpu, VmExitInfo};
 
+use vm_config::VmConfigEntry;
 /// The interfaces which the underlginh software(kernel or hypervisor) must implement.
 pub trait HyperCraftHal: Sized {
     /// Page size.
@@ -48,7 +49,7 @@ pub trait HyperCraftHal: Sized {
 /// Virtual devices of a [`VCpu`].
 pub trait PerCpuDevices<H: HyperCraftHal>: Sized {
     /// Creates a new [`PerCpuDevices`].
-    fn new(vcpu: &VCpu<H>) -> HyperResult<Self>;
+    fn new(vcpu: &VCpu<H>, config: VmConfigEntry) -> HyperResult<Self>;
     /// Handles vm-exits.
     fn vmexit_handler(&mut self, vcpu: &mut VCpu<H>, exit_info: &VmExitInfo) -> Option<HyperResult>;
     /// Checks whether there are some new events and injects them.

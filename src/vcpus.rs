@@ -1,6 +1,7 @@
 use alloc::boxed::Box;
 use arrayvec::ArrayVec;
 use spin::Once;
+use vm_config::VmConfigEntry;
 
 use crate::arch::{VCpu, VM};
 use crate::hal::PerCpuDevices;
@@ -29,14 +30,14 @@ impl<H: HyperCraftHal, PD: PerCpuDevices<H>> VmCpus<H, PD> {
     }
 
     /// Adds the given vCPU to the set of vCPUs.
-    pub fn add_vcpu(&mut self, vcpu: VCpu<H>) -> HyperResult<()> {
+    pub fn add_vcpu(&mut self, vcpu: VCpu<H>, config: VmConfigEntry) -> HyperResult<()> {
         let vcpu_id = vcpu.vcpu_id();
         let once_entry = self.inner.get(vcpu_id).ok_or(HyperError::BadState)?;
 
         let real_vcpu = once_entry.call_once(|| vcpu);
         let device_once_entry = self.device.get(vcpu_id).ok_or(HyperError::BadState)?;
 
-        device_once_entry.call_once(|| PD::new(real_vcpu).unwrap());
+        device_once_entry.call_once(|| PD::new(real_vcpu, config).unwrap());
 
         Ok(())
     }
