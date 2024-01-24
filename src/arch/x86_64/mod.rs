@@ -71,18 +71,30 @@ impl<H: HyperCraftHal, PD: PerCpuDevices<H>, VD: PerVmDevices<H>> VM<H, PD, VD> 
         loop {
             if let Some(exit_info) = vcpu.run() {
                 // we need to handle vm-exit this by ourselves
-                let result = vcpu_device.vmexit_handler(vcpu, &exit_info)
-                    .or_else(|| self.device.vmexit_handler(vcpu, &exit_info));
 
-                match result {
-                    Some(result) => {
-                        if result.is_err() {
-                            panic!("VM failed to handle a vm-exit: {:?}, error {:?}, vcpu: {:#x?}", exit_info.exit_reason, result.unwrap_err(), vcpu);
-                        }
-                    },
-                    None => {
-                        panic!("nobody wants to handle this vm-exit: {:?}, vcpu: {:#x?}", exit_info, vcpu);
-                    },
+                if exit_info.exit_reason == VmxExitReason::VMCALL {
+                    let regs = vcpu.regs();
+                    let id = regs.rax as u32;
+                    let args = (regs.rdi as u32, regs.rsi as u32);
+
+                    match vcpu_device.hypercall_handler(vcpu, id, args) {
+                        Ok(result) => vcpu.regs_mut().rax = result as u64,
+                        Err(e) => panic!("Hypercall failed: {e:?}, hypercall id: {id:#x}, args: {args:#x?}, vcpu: {vcpu:#x?}"),
+                    }
+                } else {
+                    let result = vcpu_device.vmexit_handler(vcpu, &exit_info)
+                        .or_else(|| self.device.vmexit_handler(vcpu, &exit_info));
+
+                    match result {
+                        Some(result) => {
+                            if result.is_err() {
+                                panic!("VM failed to handle a vm-exit: {:?}, error {:?}, vcpu: {:#x?}", exit_info.exit_reason, result.unwrap_err(), vcpu);
+                            }
+                        },
+                        None => {
+                            panic!("nobody wants to handle this vm-exit: {:?}, vcpu: {:#x?}", exit_info, vcpu);
+                        },
+                    }
                 }
             }
 

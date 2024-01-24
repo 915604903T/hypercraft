@@ -51,6 +51,8 @@ pub trait PerCpuDevices<H: HyperCraftHal>: Sized {
     fn new(vcpu: &VCpu<H>) -> HyperResult<Self>;
     /// Handles vm-exits.
     fn vmexit_handler(&mut self, vcpu: &mut VCpu<H>, exit_info: &VmExitInfo) -> Option<HyperResult>;
+    /// Handles hypercall.
+    fn hypercall_handler(&mut self, vcpu: &mut VCpu<H>, id: u32, args: (u32, u32)) -> HyperResult<u32>;
     /// Checks whether there are some new events and injects them.
     fn check_events(&mut self, vcpu: &mut VCpu<H>) -> HyperResult;
 }
