@@ -15,6 +15,8 @@ use crate::{GuestPageTableTrait, HyperCraftHal, VmCpus, HyperResult, vcpus, Hype
 use bit_set::BitSet;
 use page_table::PagingIf;
 
+const VM_EXIT_INSTR_LEN_VMCALL: u8 = 3;
+
 /// Initialize the hypervisor runtime.
 pub fn init_hv_runtime() {
     if !vmx::has_hardware_support() {
@@ -81,6 +83,8 @@ impl<H: HyperCraftHal, PD: PerCpuDevices<H>, VD: PerVmDevices<H>> VM<H, PD, VD> 
                         Ok(result) => vcpu.regs_mut().rax = result as u64,
                         Err(e) => panic!("Hypercall failed: {e:?}, hypercall id: {id:#x}, args: {args:#x?}, vcpu: {vcpu:#x?}"),
                     }
+
+                    vcpu.advance_rip(VM_EXIT_INSTR_LEN_VMCALL)?;
                 } else {
                     let result = vcpu_device.vmexit_handler(vcpu, &exit_info)
                         .or_else(|| self.device.vmexit_handler(vcpu, &exit_info));
