@@ -55,6 +55,16 @@ impl<H: HyperCraftHal, PD: PerCpuDevices<H>> VmCpus<H, PD> {
             .ok_or(HyperError::NotFound)?;
         Ok((vcpu, device))
     }
+    
+    /// Returns a reference to the vCPU with `vcpu_id` if it exists.
+    pub fn get_vcpu(&mut self, vcpu_id: usize) -> HyperResult<&mut VCpu<H>> {
+        let vcpu = self
+            .inner
+            .get_mut(vcpu_id)
+            .and_then(|once| once.get_mut())
+            .ok_or(HyperError::NotFound)?;
+        Ok(vcpu)
+    }
 }
 
 // Safety: Each VCpu is wrapped with a Mutex to provide safe concurrent access to VCpu.

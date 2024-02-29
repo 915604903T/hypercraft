@@ -14,6 +14,8 @@ use core::marker::PhantomData;
 use crate::{GuestPageTableTrait, HyperCraftHal, VmCpus, HyperResult, vcpus, HyperError, hal::{PerCpuDevices, PerVmDevices}};
 use bit_set::BitSet;
 use page_table::PagingIf;
+#[cfg(feature = "type1_5")]
+pub use vmx::LinuxContext;
 
 const VM_EXIT_INSTR_LEN_VMCALL: u8 = 3;
 
@@ -106,6 +108,43 @@ impl<H: HyperCraftHal, PD: PerCpuDevices<H>, VD: PerVmDevices<H>> VM<H, PD, VD> 
         }
 
         Ok(())
+    }
+
+    #[cfg(feature = "type1_5")]
+    #[allow(unreachable_code)]
+    /// Run a specified [`VCpu`] on current logical vcpu.
+    pub fn run_type15_vcpu(&mut self, vcpu_id: usize, linux: &LinuxContext) -> HyperResult {
+        let (vcpu, vcpu_device) = self.vcpus.get_vcpu_and_device(vcpu_id).unwrap();
+        loop {
+            if let Some(exit_info) = vcpu.run_type15(linux) {
+                if exit_info.exit_reason == VmxExitReason::VMCALL {
+                    let regs = vcpu.regs();
+                    let id = regs.rax as u32;
+                    let args = (regs.rdi as u32, regs.rsi as u32);
+
+                    match vcpu_device.hypercall_handler(vcpu, id, args) {
+                        Ok(result) => vcpu.regs_mut().rax = result as u64,
+                        Err(e) => panic!("Hypercall failed: {e:?}, hypercall id: {id:#x}, args: {args:#x?}, vcpu: {vcpu:#x?}"),
+                    }
+
+                    vcpu.advance_rip(VM_EXIT_INSTR_LEN_VMCALL)?;
+                } else {
+                    let result = vcpu_device.vmexit_handler(vcpu, &exit_info);
+                    debug!("this is result {:?}", result);
+                    match result {
+                        Some(result) => {
+                            if result.is_err() {
+                                panic!("VM failed to handle a vm-exit: {:?}, error {:?}, vcpu: {:#x?}", exit_info.exit_reason, result.unwrap_err(), vcpu);
+                            }
+                        },
+                        None => {
+                            panic!("nobody wants to handle this vm-exit: {:?}, vcpu: {:#x?}", exit_info, vcpu);
+                        },
+                    }
+                }
+            }
+            // vcpu_device.check_events(vcpu)?;
+        }
     }
 
     /// Unbind the specified [`VCpu`] bond by [`VM::<H>::bind_vcpu`].

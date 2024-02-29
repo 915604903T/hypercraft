@@ -1,7 +1,7 @@
 use bit_field::BitField;
 use core::marker::PhantomData;
 
-use crate::{HyperCraftHal, HostPhysAddr, GuestPhysAddr};
+use crate::{HyperCraftHal, HostPhysAddr, HostVirtAddr, GuestPhysAddr};
 use crate::{HyperResult, HyperError};
 use crate::arch::memory::PhysFrame;
 
@@ -30,6 +30,10 @@ impl<H: HyperCraftHal> VmxRegion<H> {
 
     pub fn phys_addr(&self) -> HostPhysAddr {
         self.frame.start_paddr()
+    }
+
+    pub fn virt_addr(&self) -> HostVirtAddr {
+        self.frame.as_mut_ptr() as usize
     }
 }
 

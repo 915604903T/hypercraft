@@ -58,6 +58,8 @@ pub use memory::{
     HostVirtAddr,
 };
 pub use vcpus::VmCpus;
+#[cfg(all(target_arch = "x86_64", feature = "type1_5"))]
+pub use arch::LinuxContext;
 
 #[cfg(target_arch = "aarch64")]
 pub use arch::lower_aarch64_synchronous;

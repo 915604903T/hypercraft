@@ -554,6 +554,17 @@ pub mod controls {
     pub use x86::vmx::vmcs::control::{EntryControls, ExitControls};
     pub use x86::vmx::vmcs::control::{PinbasedControls, PrimaryControls, SecondaryControls};
 }
+#[cfg(feature = "type1_5")]
+pub fn set_control_type15(
+    field: VmcsControl32,
+    old_msr: u64,
+    set: u32,
+    clear: u32,
+) -> HyperResult<()> {
+    assert_eq!((set & clear), 0);
+    field.write((old_msr as u32) & !clear | set)?;
+    Ok(())
+}
 
 pub fn set_control(
     control: VmcsControl32,
