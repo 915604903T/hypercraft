@@ -482,12 +482,12 @@ impl <H: HyperCraftHal> VmxVcpu<H> {
         // debug!("vcpu set to linux regs: {:#x?}", self.guest_regs);
         unsafe { 
             if self.launched {
-                debug!("before resume");
+                // debug!("before resume");
                 self.vmx_resume();
             } else {
                 self.launched = true;
                 VmcsHostNW::RSP.write(&self.host_stack_top as *const _ as usize).unwrap();
-                debug!("before vmlaunch");
+                debug!("vcpu{} before vmlaunch", self.vcpu_id);
                 self.vmx_launch();
             }
         }
@@ -495,12 +495,12 @@ impl <H: HyperCraftHal> VmxVcpu<H> {
 
         // Handle vm-exits
         let exit_info = self.exit_info().unwrap();
-        // trace!("VM exit: {:#x?}", exit_info);   
-        debug!("VM exit: {:#x?}", exit_info);  
+        trace!("VM exit: {:#x?}", exit_info);   
+        // debug!("VM exit: {:#x?}", exit_info);  
 
         let cr4 = VmcsGuestNW::CR4.read().unwrap();
         if cr4.get_bit(18) {
-            debug!("get cr4 osxsave bit");
+            // debug!("get cr4 osxsave bit");
             // panic!("osxsave dead!");
         }
         match self.builtin_vmexit_handler(&exit_info) {
@@ -927,18 +927,18 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
             VmxExitReason::CR_ACCESS => panic!("Guest's access to cr not allowed: {:#x?}, {:#x?}", self, vmcs::cr_access_info()),
             VmxExitReason::EXCEPTION_NMI => {
                 let int_info = self.interrupt_exit_info().unwrap();
+                info!("hello nmi!! need to do more things...");
+                debug!("exit_info: {:#x?}\nexception: {:#x?}\nvcpu: {:#x?}", exit_info, int_info, self);
+                // self.queue_event(int_info.vector, None);
 
-                error!("exit_info: {:#x?}\nexception: {:#x?}\nvcpu: {:#x?}", exit_info, int_info, self);
-                self.queue_event(int_info.vector, None);
-
-                debug!("CR4.OSXSAVE: {}", VmcsGuestNW::CR4.read().unwrap().get_bit(18));
+                // debug!("CR4.OSXSAVE: {}", VmcsGuestNW::CR4.read().unwrap().get_bit(18));
                 
-                use raw_cpuid::{cpuid, CpuIdResult};
-                let cpuid_01 = cpuid!(0x1, 0x0);
-                debug!("CPUID.01H.ECX: {:#x?}, bit26: {}", cpuid_01.ecx, cpuid_01.ecx.get_bit(26));
+                // use raw_cpuid::{cpuid, CpuIdResult};
+                // let cpuid_01 = cpuid!(0x1, 0x0);
+                // debug!("CPUID.01H.ECX: {:#x?}, bit26: {}", cpuid_01.ecx, cpuid_01.ecx.get_bit(26));
 
-                let cpuid_0d_01 = cpuid!(0xd, 0x1);
-                debug!("CPUID.0DH(ECX=1).EAX: {:#x?}, bit3: {}", cpuid_0d_01.eax, cpuid_0d_01.eax.get_bit(3));
+                // let cpuid_0d_01 = cpuid!(0xd, 0x1);
+                // debug!("CPUID.0DH(ECX=1).EAX: {:#x?}, bit3: {}", cpuid_0d_01.eax, cpuid_0d_01.eax.get_bit(3));
 
                 Some(Ok(()))
             },
@@ -991,7 +991,7 @@ impl<H: HyperCraftHal> VmxVcpu<H> {
                 guest_regs.rcx = flags;
             }
         }
-        debug!("cpuid return guest_regs:{:#x?}", guest_regs);
+        // debug!("cpuid return guest_regs:{:#x?}", guest_regs);
         self.advance_rip(VM_EXIT_INSTR_LEN_CPUID)?;
         Ok(())
     }
